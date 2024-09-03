@@ -46,7 +46,7 @@ env:
 	rustup component add rust-src
 	rustup component add llvm-tools-preview
 
-build:  
+build:    
 	cargo build $(MODE_ARG) --features $(FEATURES)
 	
 run: env build 
@@ -62,4 +62,4 @@ gdbclient:
 	@echo "Using GDB: $(GDB_CLIENT)"
 	$(GDB_CLIENT) $(GDB_ARGS)
 
-	
+.PHONY: build	

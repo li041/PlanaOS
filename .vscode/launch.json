@@ -8,7 +8,7 @@
             "type": "gdb",
             "request": "attach",
             "name": "Attach to gdbserver",
-            "executable": "${workspaceRoot}/os/target/riscv64gc-unknown-none-elf/release/os",
+            "executable": "${workspaceRoot}/os/target/riscv64gc-unknown-none-elf/debug/os",
             "gdbpath": "riscv64-unknown-elf-gdb",
             "remote": true,            
             "target": "127.0.0.1:1234",
