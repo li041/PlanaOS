@@ -8,6 +8,7 @@
 TARGET := riscv64gc-unknown-none-elf
 MODE := debug
 KERNEL_ELF := target/$(TARGET)/$(MODE)/os
+KERNEL_BIN := $(KERNEL_ELF).bin
 FEATURES := default
 
 # BOARD
@@ -16,15 +17,22 @@ SBI ?= opensbi
 BOOTLOADER := ../bootloader/$(SBI)-$(BOARD).bin
 BOOTLOADER_ELF := ../bootloader/$(SBI)-$(BOARD)
 
+# Configs
+MEM_SIZE = 128M
+
+# Binutils
+OBJCOPY := rust-objcopy --binary-architecture=riscv64
+
 ifeq ($(MODE), release)
 	MODE_ARG := --release
 endif
 
 # QEMU
 QEMU_ARGS := 	-machine virt \
+				-m $(MEM_SIZE) \
+				-kernel $(KERNEL_BIN) \
 				-nographic \
-				-bios ../bootloader/opensbi-qemu.bin \
-				-device loader,file=target/riscv64gc-unknown-none-elf/debug/os,addr=0x80200000  
+				-bios $(BOOTLOADER_ELF)\
 
 # gdb
 GDB_CLIENT := riscv64-unknown-elf-gdb
@@ -48,6 +56,7 @@ env:
 
 build:    
 	cargo build $(MODE_ARG) --features $(FEATURES)
+	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
 	
 run: env build 
 	qemu-system-riscv64 $(QEMU_ARGS)
