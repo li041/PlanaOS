@@ -2,6 +2,7 @@
 #![no_main]
 #![feature(alloc_error_handler)]
 #![feature(panic_info_message)]
+#![feature(negative_impls)]
 
 extern crate alloc;
 
