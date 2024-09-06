@@ -7,12 +7,6 @@ use alloc::fmt;
 use crate::config::{KERNEL_BASE, PAGE_SIZE_BITS};
 use super::page_table::PageTableEntry;
 
-const PA_WIDTH_SV39: usize = 56;
-const VA_WIDTH_SV39: usize = 39;
-const PPN_WIDTH_SV39: usize = PA_WIDTH_SV39 - PAGE_SIZE_BITS;
-const VPN_WIDTH_SV39: usize = VA_WIDTH_SV39 - PAGE_SIZE_BITS;
-
-
 #[repr(C)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PhysAddr(pub usize);
@@ -97,6 +91,9 @@ impl VirtAddr {
     }
 }
 
+pub trait StepByOne {
+    fn step(&mut self);
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -109,7 +106,14 @@ impl From<usize> for PhysPageNum {
     }
 }
 
+impl StepByOne for PhysPageNum {
+    fn step(&mut self) {
+        self.0 += 1;
+    }
+}
+
 // 注意通过ppn获取对应物理页帧仍然是使用虚拟地址, 内核虚拟地址空间偏移KERNEL_BASE(0xffff_ffc0_0000_0000)
+// 映射关系是在entry.asm中设置的
 impl PhysPageNum {
     /// Get `PageTableEntry` on `PhysPageNum`
     pub fn get_pte_array(&self) -> &'static mut [PageTableEntry] {
@@ -136,12 +140,32 @@ impl PhysPageNum {
 
 
 #[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct VirtPageNum(pub usize);
 
 impl From<usize> for VirtPageNum {
     fn from(addr: usize) -> Self {
         // Self(addr & ((1 << VPN_WIDTH_SV39) - 1))
         Self(addr)
+    }
+}
+
+impl VirtPageNum {
+    ///Return VPN 3 level index
+    pub fn indexes(&self) -> [usize; 3] {
+        let mut vpn = self.0;
+        let mut idx = [0usize; 3];
+        for i in (0..3).rev() {
+            idx[i] = vpn & 511;
+            vpn >>= 9;
+        }
+        idx
+    }
+}
+
+impl StepByOne for VirtPageNum {
+    fn step(&mut self) {
+        self.0 += 1;
     }
 }
 
@@ -167,3 +191,68 @@ impl Debug for PhysPageNum {
         f.write_fmt(format_args!("PPN:{:#x}", self.0))
     }
 }
+
+#[derive(Copy, Clone)]
+pub struct SimpleRange<T>
+where
+    T: StepByOne + Copy + PartialEq + PartialOrd + Debug,
+{
+    l: T,
+    r: T,
+}
+impl<T> SimpleRange<T>
+where
+    T: StepByOne + Copy + PartialEq + PartialOrd + Debug,
+{
+    pub fn new(start: T, end: T) -> Self {
+        assert!(start <= end, "start {:?} > end {:?}!", start, end);
+        Self { l: start, r: end }
+    }
+    pub fn get_start(&self) -> T {
+        self.l
+    }
+    pub fn get_end(&self) -> T {
+        self.r
+    }
+}
+impl<T> IntoIterator for SimpleRange<T>
+where
+    T: StepByOne + Copy + PartialEq + PartialOrd + Debug,
+{
+    type Item = T;
+    type IntoIter = SimpleRangeIterator<T>;
+    fn into_iter(self) -> Self::IntoIter {
+        SimpleRangeIterator::new(self.l, self.r)
+    }
+}
+pub struct SimpleRangeIterator<T>
+where
+    T: StepByOne + Copy + PartialEq + PartialOrd + Debug,
+{
+    current: T,
+    end: T,
+}
+impl<T> SimpleRangeIterator<T>
+where
+    T: StepByOne + Copy + PartialEq + PartialOrd + Debug,
+{
+    pub fn new(l: T, r: T) -> Self {
+        Self { current: l, end: r }
+    }
+}
+impl<T> Iterator for SimpleRangeIterator<T>
+where
+    T: StepByOne + Copy + PartialEq + PartialOrd + Debug,
+{
+    type Item = T;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current == self.end {
+            None
+        } else {
+            let t = self.current;
+            self.current.step();
+            Some(t)
+        }
+    }
+}
+pub type VPNRange = SimpleRange<VirtPageNum>;

@@ -15,7 +15,9 @@ mod mm;
 mod logging;
 mod syscall;
 mod task;
+mod boards;
 pub mod mutex;
+pub mod index_list;
 
 pub mod config;
 
