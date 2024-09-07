@@ -63,6 +63,9 @@ pub fn fake_main(hart_id: usize) {
 pub fn rust_main(_hart_id: usize) -> ! {
     clear_bss();
     println!("hello world");
+    println!("1/3");
+    println!("2/3");
+    println!("3/3");
     logging::init();
     #[cfg(feature = "test")]
     logging::test();
