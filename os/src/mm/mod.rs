@@ -1,4 +1,4 @@
-
+#[cfg(feature = "test")]
 use frame_allocator::frame_allocator_test;
 #[cfg(feature = "test")]
 use heap_allocator::heap_test;
