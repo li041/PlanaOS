@@ -71,4 +71,7 @@ gdbclient:
 	@echo "Using GDB: $(GDB_CLIENT)"
 	$(GDB_CLIENT) $(GDB_ARGS)
 
+last:
+	qemu-system-riscv64 $(QEMU_ARGS)
+
 .PHONY: build	

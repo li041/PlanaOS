@@ -8,22 +8,30 @@ extern crate alloc;
 
 #[macro_use]
 mod console;
-mod sbi;
+
+mod board;
+pub mod config;
 mod lang_items;
-mod trap;
 mod loader;
-mod mm;
 mod logging;
+mod mm;
+pub mod mutex;
+mod sbi;
 mod syscall;
 mod task;
-pub mod mutex;
+mod timer;
+mod trap;
+mod utils;
 
-pub mod config;
+use core::{
+    arch::{asm, global_asm},
+    ffi::c_void,
+    ptr,
+};
 
+use utils::entry_anim::draw_entry_animation;
 
-use core::{arch::{global_asm, asm}, ffi::c_void, ptr};
 use crate::config::KERNEL_BASE;
-
 
 global_asm!(include_str!("entry.S"));
 global_asm!(include_str!("link_app.S"));
@@ -58,14 +66,10 @@ pub fn fake_main(hart_id: usize) {
     }
 }
 
-
 #[no_mangle]
 pub fn rust_main(_hart_id: usize) -> ! {
     clear_bss();
-    println!("hello world");
-    println!("1/3");
-    println!("2/3");
-    println!("3/3");
+    draw_entry_animation(false);
     logging::init();
     #[cfg(feature = "test")]
     logging::test();
@@ -73,4 +77,3 @@ pub fn rust_main(_hart_id: usize) -> ! {
     loader::list_apps();
     panic!("shutdown machine");
 }
-
