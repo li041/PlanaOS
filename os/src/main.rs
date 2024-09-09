@@ -19,15 +19,13 @@ pub mod mutex;
 mod sbi;
 mod syscall;
 mod task;
+mod boards;
+pub mod index_list;
+
+use core::{arch::{global_asm, asm}, ffi::c_void, ptr};
 mod timer;
 mod trap;
 mod utils;
-
-use core::{
-    arch::{asm, global_asm},
-    ffi::c_void,
-    ptr,
-};
 
 use utils::entry_anim::draw_entry_animation;
 

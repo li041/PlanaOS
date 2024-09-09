@@ -2,7 +2,7 @@
 //! controls all the frames in the operating system.
 
 use super::{PhysAddr, PhysPageNum};
-use crate::config::MEMORY_END;
+use crate::{boards::qemu::MEMORY_END, config::KERNEL_BASE};
 use crate::mutex::SpinNoIrqLock;
 use alloc::vec::Vec;
 use core::fmt::{self, Debug, Formatter};
@@ -10,7 +10,6 @@ use lazy_static::*;
 
 /// manage a frame which has the same lifecycle as the tracker
 pub struct FrameTracker {
-    ///
     pub ppn: PhysPageNum,
 }
 
@@ -98,8 +97,10 @@ pub fn init_frame_allocator() {
     extern "C" {
         fn ekernel();
     }
+    // Qemu物理内存: 0x8000_0000 - 0x8800_0000
+    // 在entry.asm中设置了映射: 0xffff_ffc0_8000_0000 -> 0x8000_0000, 分配了1G的内存(超出实际)
     FRAME_ALLOCATOR.lock().init(
-        PhysAddr::from(ekernel as usize).ceil(),
+        PhysAddr::from((ekernel as usize - KERNEL_BASE) as usize).ceil(),
         PhysAddr::from(MEMORY_END).floor(),
     );
 }
