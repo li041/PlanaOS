@@ -6,17 +6,17 @@ extern crate alloc;
 
 #[macro_use]
 mod console;
-mod sbi;
 mod lang_items;
-mod trap;
 mod loader;
 mod mm;
+mod sbi;
+mod trap;
 
 pub mod config;
 
-
 use core::{arch::global_asm, ffi::c_void, ptr};
 
+use log::info;
 
 global_asm!(include_str!("entry.S"));
 
@@ -31,13 +31,12 @@ fn clear_bss() {
     }
 }
 
-
 #[no_mangle]
 pub fn rust_main() -> ! {
-    println!("hello world");
+    console::log_init();
+    info!("hello world");
     //loader::list_apps();
     mm::init();
     clear_bss();
     panic!("shutdown machine");
 }
-
