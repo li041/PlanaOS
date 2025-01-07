@@ -211,6 +211,15 @@ where
     pub fn get_end(&self) -> T {
         self.r
     }
+    pub fn set_end(&mut self, end: T) {
+        self.r = end;
+    }
+    pub fn is_intersect_with(&self, other: &Self) -> bool {
+        self.l < other.r && self.r > other.l
+    }
+    pub fn is_contain(&self, other: &Self) -> bool {
+        self.l <= other.l && self.r >= other.r
+    }
 }
 impl<T> IntoIterator for SimpleRange<T>
 where

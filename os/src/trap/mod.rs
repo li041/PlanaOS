@@ -16,7 +16,7 @@ use crate::{
     mm::{page_table::PageTable, VirtAddr},
     sbi::shutdown,
     syscall::syscall,
-    task::{kstack::KSTACK_BOTTOM, suspend_current_and_run_next},
+    task::{kstack::KSTACK_BOTTOM, yield_current_task},
     timer::set_next_trigger,
     DEBUG_FLAG,
 };
@@ -89,9 +89,11 @@ pub fn trap_handler(cx: &mut TrapContext) {
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             set_next_trigger();
-            suspend_current_and_run_next();
+            yield_current_task();
         }
         _ => {
+            let current_task = crate::task::current_task();
+            log::error!("task {} trap", current_task.tid,);
             panic!(
                 "Unsupported trap {:?}, stval = {:#x}, sepc = {:#x}!",
                 scause.cause(),
@@ -99,9 +101,6 @@ pub fn trap_handler(cx: &mut TrapContext) {
                 sepc::read()
             );
         }
-    }
-    if cx.x[10] == 0xffffffc080203d6c {
-        panic!("a0 is 0xffffffc080203d6c");
     }
     return;
 }

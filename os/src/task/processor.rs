@@ -54,10 +54,6 @@ pub fn run_tasks() {
             next_task_inner.task_status = TaskStatus::Running;
             let next_task_kernel_stack = next_task.kstack.0;
             let next_tp = Arc::as_ptr(&next_task) as usize;
-            log::error!("next_tp: {:#x}", next_tp);
-            log::info!("next_task_kernel_stack: {:#x}", next_task_kernel_stack);
-
-            log::info!("switch to task {}", next_task.tid);
             // 注意这里要主动drop, 否则会造成死锁
             drop(current_task_inner);
             drop(next_task_inner);

@@ -238,6 +238,15 @@ impl PageTable {
         // *pte = PageTableEntry::new(ppn, flags | PTEFlags::V);
         *pte = PageTableEntry::new(ppn, flags | PTEFlags::V | PTEFlags::A | PTEFlags::D);
     }
+    pub fn unmap(&mut self, vpn: VirtPageNum) {
+        let pte = self.find_pte(vpn).unwrap();
+        assert!(
+            pte.is_valid(),
+            "vpn {:?} is not mapped before unmapping",
+            vpn
+        );
+        *pte = PageTableEntry::empty();
+    }
 }
 
 impl PageTable {

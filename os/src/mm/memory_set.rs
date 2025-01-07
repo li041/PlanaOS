@@ -2,7 +2,7 @@
 //! MapArea
 //! MapType
 //! MapPermision
-use core::arch::asm;
+use core::{arch::asm, sync::atomic::AtomicU64};
 
 use super::{page_table, VirtAddr};
 use crate::{
@@ -14,7 +14,7 @@ use crate::{
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 use bitflags::bitflags;
 use log::info;
-use riscv::{addr::Page, register::satp};
+use riscv::{addr::Page, paging::Mapper, register::satp};
 use xmas_elf::program::Type;
 
 use super::{
@@ -68,6 +68,10 @@ lazy_static! {
 }
 
 pub struct MemorySet {
+    // 要访问MemorySet必须先获取Taskinner的锁, 所以这里不需要加锁
+    // 注意brk时当前堆顶, 但实际分配给堆的内存是页对齐的
+    pub brk: usize,
+    pub heap_bottom: usize,
     pub page_table: PageTable,
     areas: IndexList<MapArea>,
 }
@@ -76,21 +80,31 @@ pub struct MemorySet {
 impl MemorySet {
     pub fn new_bare() -> Self {
         Self {
+            brk: 0,
+            heap_bottom: 0,
             page_table: PageTable::new(),
             areas: IndexList::new(),
         }
     }
 
-    /// Crate a user `MemorySet` that owns the global kernel mapping
+    /// 创建一个拥有内核空间一级映射的用户空间
+    /// 用于创建用户进程, used by `from_elf, from_existed_user`
+    /// 初始用户程序不分配堆内存, 只分配堆底
     pub fn from_global() -> Self {
         let page_table = PageTable::from_global();
         Self {
+            // 在caller中分配堆底
+            brk: 0,
+            heap_bottom: 0,
             page_table,
             areas: IndexList::new(),
         }
     }
     pub fn from_existed_user(user_memory_set: &MemorySet) -> Self {
         let mut memory_set = Self::from_global();
+        // 复制堆底和brk, 堆内容会在user_memory_set.areas.iter()中复制
+        memory_set.brk = user_memory_set.brk;
+        memory_set.heap_bottom = user_memory_set.heap_bottom;
         for area in user_memory_set.areas.iter() {
             let new_area = MapArea::from_another(area);
             // 这里只做了分配物理页, 填加页表映射, 没有复制数据
@@ -200,6 +214,11 @@ impl MemorySet {
             MapPermission::R | MapPermission::W | MapPermission::U,
             0,
         );
+        // 分配用户堆底, 初始不分配堆内存
+        let heap_bottom = ustack_top + PAGE_SIZE;
+        memory_set.heap_bottom = heap_bottom;
+        memory_set.brk = heap_bottom;
+
         return (memory_set, satp, ustack_top, entry_point, aux_vec);
     }
     pub fn new_kernel() -> Self {
@@ -355,6 +374,66 @@ impl MemorySet {
             index = self.areas.prev_index(index);
         }
     }
+
+    /// 从尾部开始找, 因为动态分配的内存一般在最后
+    /// 在原有的MapArea上增/删页, 并添加相关映射
+    /// used by `sys_brk`
+    pub fn remap_area_with_start_vpn(&mut self, start_vpn: VirtPageNum, new_end_vpn: VirtPageNum) {
+        let mut index = self.areas.last_index();
+        let delete_flag = new_end_vpn == start_vpn;
+        while index.is_some() {
+            let area = self.areas.get_mut(index).unwrap();
+            if area.vpn_range.get_start() == start_vpn {
+                let old_end_vpn = area.vpn_range.get_end();
+                if old_end_vpn < new_end_vpn {
+                    let alloc_vpn_range = VPNRange::new(old_end_vpn, new_end_vpn);
+                    for vpn in alloc_vpn_range {
+                        area.alloc_one_page(&mut self.page_table, vpn);
+                    }
+                } else {
+                    let dealloc_vpn_range = VPNRange::new(new_end_vpn, old_end_vpn);
+                    for vpn in dealloc_vpn_range {
+                        area.dealloc_one_page(&mut self.page_table, vpn);
+                    }
+                }
+                area.vpn_range.set_end(new_end_vpn);
+                // 如果新的end和start相等, 则删除这个area
+                if delete_flag {
+                    self.areas.remove(index);
+                }
+                return;
+            }
+            index = self.areas.prev_index(index);
+        }
+        log::error!(
+            "[MemorySet::remap_area_with_start_vpn] can't find area with start_vpn: {:#x}",
+            start_vpn.0
+        );
+    }
+}
+
+/// MemorySet检查的方法
+impl MemorySet {
+    // 使用`MapArea`做检查, 而不是查页表
+    // 要保证MapArea与页表的一致性, 也就是说, 页表中的映射都在MapArea中, MapArea中的映射都在页表中
+    // 检查用户传进来的虚拟地址的合法性
+    pub fn check_valid_user_vpn_range(
+        &self,
+        vpn_range: VPNRange,
+        wanted_map_perm: MapPermission,
+    ) -> Result<(), &'static str> {
+        let areas = self.areas.iter().rev();
+        for area in areas {
+            if area.vpn_range.is_contain(&vpn_range) {
+                if area.map_perm.contains(wanted_map_perm) {
+                    return Ok(());
+                } else {
+                    return Err("invalid virtual permission");
+                }
+            }
+        }
+        return Err("invalid virtual address");
+    }
 }
 
 #[derive(Clone)]
@@ -422,6 +501,22 @@ impl MapArea {
         }
         let pte_flags = PTEFlags::from_bits(self.map_perm.bits()).unwrap();
         page_table.map(vpn, ppn, pte_flags);
+    }
+    /// 在原有的MapArea上增加一个页, 并添加相关映射
+    /// used by `sys_brk`
+    pub fn alloc_one_page(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
+        let frame = frame_alloc().unwrap();
+        let ppn = frame.ppn;
+        let pte_flags = PTEFlags::from_bits(self.map_perm.bits()).unwrap();
+        page_table.map(vpn, ppn, pte_flags);
+        self.data_frames.insert(vpn, Arc::new(frame));
+    }
+    /// 在原有的MapArea上删除一个页, 并删除相关映射
+    /// used by `sys_brk`
+    pub fn dealloc_one_page(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
+        let frame = self.data_frames.remove(&vpn).unwrap();
+        page_table.unmap(vpn);
+        drop(frame);
     }
 }
 
