@@ -28,11 +28,10 @@ pub fn kstack_alloc() -> usize {
         kstack_bottom
     );
 
-    KERNEL_SPACE.lock().insert_framed_area(
+    KERNEL_SPACE.lock().insert_framed_area_va(
         kstack_bottom.into(),
         kstack_top.into(),
         MapPermission::R | MapPermission::W,
-        0,
     );
     kstack_top
 }

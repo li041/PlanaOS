@@ -4,10 +4,13 @@ use std::io::{Result, Write};
 fn main() {
     println!("cargo:rerun-if-changed=../user/src/");
     println!("cargo:rerun-if-changed={}", TARGET_PATH);
+    println!("cargo:rerun-if-changed={}", BUSYBOX_PATH);
     insert_app_data().unwrap();
 }
 
 static TARGET_PATH: &str = "../user/target/riscv64gc-unknown-none-elf/release/";
+static BUSYBOX_PATH: &str = "../busybox";
+static errno_path: &str = "../errno_test";
 
 fn insert_app_data() -> Result<()> {
     let mut f = File::create("src/link_app.S").unwrap();
@@ -21,6 +24,13 @@ fn insert_app_data() -> Result<()> {
         })
         .collect();
     apps.sort();
+
+    // Include BusyBox as the last app
+    let busybox_name = "busybox";
+    apps.push(busybox_name.to_string());
+
+    let errno_name = "errno_test";
+    apps.push(errno_name.to_string());
 
     writeln!(
         f,
@@ -50,9 +60,36 @@ _app_names:"#
 
     for (idx, app) in apps.iter().enumerate() {
         println!("app_{}: {}", idx, app);
-        writeln!(
-            f,
-            r#"
+        if app == busybox_name {
+            writeln!(
+                f,
+                r#"
+    .section .data
+    .global app_{0}_start
+    .global app_{0}_end
+    .align 3
+app_{0}_start:
+    .incbin "{1}"
+app_{0}_end:"#,
+                idx, BUSYBOX_PATH
+            )?;
+        } else if app == errno_name {
+            writeln!(
+                f,
+                r#"
+    .section .data
+    .global app_{0}_start
+    .global app_{0}_end
+    .align 3
+app_{0}_start:
+    .incbin "{1}"
+app_{0}_end:"#,
+                idx, errno_path
+            )?;
+        } else {
+            writeln!(
+                f,
+                r#"
     .section .data
     .global app_{0}_start
     .global app_{0}_end
@@ -60,8 +97,9 @@ _app_names:"#
 app_{0}_start:
     .incbin "{2}{1}"
 app_{0}_end:"#,
-            idx, app, TARGET_PATH
-        )?;
+                idx, app, TARGET_PATH
+            )?;
+        }
     }
     Ok(())
 }

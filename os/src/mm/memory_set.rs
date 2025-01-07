@@ -6,15 +6,20 @@ use core::{arch::asm, sync::atomic::AtomicU64};
 
 use super::{page_table, VirtAddr};
 use crate::{
-    config::{PAGE_SIZE_BITS, USER_STACK_SIZE},
+    config::{MMAP_MIN_ADDR, PAGE_SIZE_BITS, USER_STACK_SIZE},
     mm::check_va_mapping,
     task::aux::*,
+    utils::ceil_to_page_size,
     DEBUG_FLAG,
 };
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 use bitflags::bitflags;
 use log::info;
-use riscv::{addr::Page, paging::Mapper, register::satp};
+use riscv::{
+    addr::Page,
+    paging::Mapper,
+    register::{mstatus::set_fs, satp},
+};
 use xmas_elf::program::Type;
 
 use super::{
@@ -72,6 +77,9 @@ pub struct MemorySet {
     // 注意brk时当前堆顶, 但实际分配给堆的内存是页对齐的
     pub brk: usize,
     pub heap_bottom: usize,
+    /// mmap的起始地址, 用于用户态mmap
+    /// 仅在`get_unmapped_area`中使用, 可以保证页对齐, 且不会冲突
+    pub mmap_start: usize,
     pub page_table: PageTable,
     areas: IndexList<MapArea>,
 }
@@ -82,6 +90,7 @@ impl MemorySet {
         Self {
             brk: 0,
             heap_bottom: 0,
+            mmap_start: MMAP_MIN_ADDR,
             page_table: PageTable::new(),
             areas: IndexList::new(),
         }
@@ -96,6 +105,7 @@ impl MemorySet {
             // 在caller中分配堆底
             brk: 0,
             heap_bottom: 0,
+            mmap_start: MMAP_MIN_ADDR,
             page_table,
             areas: IndexList::new(),
         }
@@ -108,7 +118,7 @@ impl MemorySet {
         for area in user_memory_set.areas.iter() {
             let new_area = MapArea::from_another(area);
             // 这里只做了分配物理页, 填加页表映射, 没有复制数据
-            memory_set.push(new_area, None, 0);
+            memory_set.push_anoymous_area(new_area);
             // 复制数据
             for vpn in area.vpn_range {
                 let src_ppn = user_memory_set
@@ -142,7 +152,7 @@ impl MemorySet {
         assert_eq!(magic, [0x7f, 0x45, 0x4c, 0x46], "invalid elf!");
         let ph_count = elf_header.pt2.ph_count();
         // Todo: 动态链接, entry_point是动态链接器的入口
-        let mut entry_point = elf_header.pt2.entry_point() as usize;
+        let entry_point = elf_header.pt2.entry_point() as usize;
         let mut aux_vec: Vec<AuxHeader> = Vec::with_capacity(64);
 
         // 页大小为4K
@@ -188,13 +198,13 @@ impl MemorySet {
                 if ph_flags.is_execute() {
                     map_perm |= MapPermission::X;
                 }
-                let map_area = MapArea::new(start_va, end_va, MapType::Framed, map_perm);
+                let map_area = MapArea::new_from_va(start_va, end_va, MapType::Framed, map_perm);
                 // 对齐到页
                 max_end_vpn = map_area.vpn_range.get_end();
 
                 let map_offset = start_va.0 - start_va.floor().0 * PAGE_SIZE;
                 log::info!("map area: [{:#x}, {:#x})", start_va.0, end_va.0);
-                memory_set.push(
+                memory_set.push_with_offset(
                     map_area,
                     Some(&elf_data[ph.offset() as usize..(ph.offset() + ph.file_size()) as usize]),
                     map_offset,
@@ -208,11 +218,10 @@ impl MemorySet {
             "[MemorySet::from_elf] user stack [{:#x}, {:#x})",
             ustack_bottom, ustack_top
         );
-        memory_set.insert_framed_area(
+        memory_set.insert_framed_area_va(
             ustack_bottom.into(),
             ustack_top.into(),
             MapPermission::R | MapPermission::W | MapPermission::U,
-            0,
         );
         // 分配用户堆底, 初始不分配堆内存
         let heap_bottom = ustack_top + PAGE_SIZE;
@@ -232,8 +241,8 @@ impl MemorySet {
             sbss_with_stack as usize, ebss as usize
         );
         info!("mapping .text section");
-        memory_set.push(
-            MapArea::new(
+        memory_set.push_with_offset(
+            MapArea::new_from_va(
                 (stext as usize).into(),
                 (etext as usize).into(),
                 MapType::Linear,
@@ -248,8 +257,8 @@ impl MemorySet {
         //     PTEFlags::R | PTEFlags::X | PTEFlags::U,
         // );
         info!("mapping .rodata section");
-        memory_set.push(
-            MapArea::new(
+        memory_set.push_with_offset(
+            MapArea::new_from_va(
                 (srodata as usize).into(),
                 (erodata as usize).into(),
                 MapType::Linear,
@@ -260,8 +269,8 @@ impl MemorySet {
             0,
         );
         info!("mapping .data section");
-        memory_set.push(
-            MapArea::new(
+        memory_set.push_with_offset(
+            MapArea::new_from_va(
                 (sdata as usize).into(),
                 (edata as usize).into(),
                 MapType::Linear,
@@ -272,8 +281,8 @@ impl MemorySet {
             0,
         );
         info!("mapping .bss section");
-        memory_set.push(
-            MapArea::new(
+        memory_set.push_with_offset(
+            MapArea::new_from_va(
                 (sbss_with_stack as usize).into(),
                 (ebss as usize).into(),
                 MapType::Linear,
@@ -284,8 +293,8 @@ impl MemorySet {
             0,
         );
         info!("mapping physical memory");
-        memory_set.push(
-            MapArea::new(
+        memory_set.push_with_offset(
+            MapArea::new_from_va(
                 (ekernel as usize).into(),
                 (KERNEL_BASE + MEMORY_END).into(),
                 MapType::Linear,
@@ -297,8 +306,8 @@ impl MemorySet {
         );
         info!("mapping memory-mapped registers");
         for pair in MMIO {
-            memory_set.push(
-                MapArea::new(
+            memory_set.push_with_offset(
+                MapArea::new_from_va(
                     ((*pair).0 + KERNEL_BASE).into(),
                     ((*pair).0 + (*pair).1 + KERNEL_BASE).into(),
                     MapType::Linear,
@@ -325,28 +334,41 @@ impl MemorySet {
 
 impl MemorySet {
     /// map_offset: the offset in the first page
-    fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>, map_offset: usize) {
+    /// 在data不为None时, map_offset才有意义, 是data在第一个页中的偏移
+    fn push_with_offset(&mut self, mut map_area: MapArea, data: Option<&[u8]>, map_offset: usize) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
             map_area.copy_data(&mut self.page_table, data, map_offset);
         }
         self.areas.insert_last(map_area);
     }
+    fn push_anoymous_area(&mut self, mut map_area: MapArea) {
+        map_area.map(&mut self.page_table);
+        self.areas.insert_last(map_area);
+    }
     /// 由caller保证区域没有冲突, 且start_va和end_va是页对齐的
     /// 插入framed的空白区域
     /// used by `kstack_alloc`, `from_elf 用户栈`
-    pub fn insert_framed_area(
+    pub fn insert_framed_area_va(
         &mut self,
         start_va: VirtAddr,
         end_va: VirtAddr,
         map_perm: MapPermission,
-        map_offset: usize,
     ) {
-        self.push(
-            MapArea::new(start_va, end_va, MapType::Framed, map_perm),
-            None,
-            map_offset,
-        );
+        self.push_anoymous_area(MapArea::new_from_va(
+            start_va,
+            end_va,
+            MapType::Framed,
+            map_perm,
+        ));
+    }
+    //
+    pub fn insert_framed_area_vpn_range(&mut self, vpn_range: VPNRange, map_perm: MapPermission) {
+        self.push_anoymous_area(MapArea::new_from_vpn_range(
+            vpn_range,
+            MapType::Framed,
+            map_perm,
+        ));
     }
     /// change the satp register to the new page table, and flush the TLB
     pub fn activate(&self) {
@@ -356,13 +378,54 @@ impl MemorySet {
             asm!("sfence.vma");
         }
     }
+    // 在memory_set.mmap_start加到MMAP_MAX_ADDR前可以保证没有冲突
+    pub fn get_unmapped_area(&mut self, _hint: usize, size: usize) -> VPNRange {
+        let aligned_size = ceil_to_page_size(size);
+        let start_vpn = VirtPageNum::from(self.mmap_start >> PAGE_SIZE_BITS);
+        let end_vpn = VirtPageNum::from((self.mmap_start + aligned_size) >> PAGE_SIZE_BITS);
+        self.mmap_start += aligned_size;
+        VPNRange::new(start_vpn, end_vpn)
+    }
 }
 
 impl MemorySet {
     pub fn recycle_data_pages(&mut self) {
         self.areas.clear();
     }
+    pub fn remove_area_with_overlap(&mut self, unmap_vpn_range: VPNRange) {
+        let mut index = self.areas.last_index();
+        while index.is_some() {
+            let area = self.areas.get_mut(index).unwrap();
+            if area.vpn_range.is_intersect_with(&unmap_vpn_range) {
+                let old_vpn_start = area.vpn_range.get_start();
+                let old_vpn_end = area.vpn_range.get_end();
+                let new_vpn_end = old_vpn_end.min(unmap_vpn_range.get_end());
+                let new_vpn_start = old_vpn_start.max(unmap_vpn_range.get_start());
+                log::error!(
+                    "[MemorySet::remove_area_with_overlap] old_vpn_start: {:#x}, old_vpn_end: {:#x}, new_vpn_start: {:#x}, new_vpn_end: {:#x}",
+                    old_vpn_start.0,
+                    old_vpn_end.0,
+                    new_vpn_start.0,
+                    new_vpn_end.0
+                );
+                // 对于vpn_start ~ new_vpn_start的页, 释放, 对于new_vpn_end ~ vpn_end的页, 释放
+                let dealloc_vpn_range1 = VPNRange::new(old_vpn_start, new_vpn_start);
+                for vpn in dealloc_vpn_range1 {
+                    area.dealloc_one_page(&mut self.page_table, vpn);
+                }
+                let dealloc_vpn_range2 = VPNRange::new(old_vpn_end, new_vpn_end);
+                for vpn in dealloc_vpn_range2 {
+                    area.dealloc_one_page(&mut self.page_table, vpn);
+                }
+                area.vpn_range.set_start(new_vpn_start);
+                area.vpn_range.set_end(new_vpn_end);
+                break;
+            }
+            index = self.areas.prev_index(index);
+        }
+    }
     // 这里从尾部开始找, 因为在MemorySet中, 内核栈一般在最后
+    // used by `sys_brk`, 这是因为heap_bottom是固定的
     pub fn remove_area_with_start_vpn(&mut self, start_vpn: VirtPageNum) {
         let mut index = self.areas.last_index();
         while index.is_some() {
@@ -447,7 +510,7 @@ pub struct MapArea {
 // constructor
 impl MapArea {
     /// Create a empty `MapArea` from va
-    pub fn new(
+    pub fn new_from_va(
         start_va: VirtAddr,
         end_va: VirtAddr,
         map_type: MapType,
@@ -457,6 +520,18 @@ impl MapArea {
         let end_vpn: VirtPageNum = end_va.ceil();
         Self {
             vpn_range: VPNRange::new(start_vpn, end_vpn),
+            data_frames: BTreeMap::new(),
+            map_type,
+            map_perm,
+        }
+    }
+    pub fn new_from_vpn_range(
+        vpn_range: VPNRange,
+        map_type: MapType,
+        map_perm: MapPermission,
+    ) -> Self {
+        Self {
+            vpn_range,
             data_frames: BTreeMap::new(),
             map_type,
             map_perm,

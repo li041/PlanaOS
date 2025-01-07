@@ -54,21 +54,6 @@ pub struct Task {
     pub inner: SpinNoIrqLock<TaskInner>,
 }
 
-pub struct TaskInner {
-    pub memory_set: MemorySet,
-    pub task_status: TaskStatus,
-    /// 使用Weak指针, 防止循环引用, 不影响父进程的引用计数
-    /// initproc的parent为None
-    // pub parent: Option<Weak<Task>>,
-    // 使用usize记录父进程的Task指针
-    // initproc的parent为0
-    pub parent: Option<Weak<Task>>,
-    pub children: Vec<Arc<Task>>,
-    pub exit_code: i32,
-    pub fd_table: Vec<Option<Arc<dyn File + Send + Sync>>>,
-    pub cwd: Path,
-}
-
 // 通过tp寄存器使用裸指针获取当前Task
 pub fn current_task_violate() -> Task {
     let tp: usize;
@@ -308,6 +293,37 @@ lazy_static! {
     pub static ref INITPROC: Arc<Task> = Task::new_initproc(get_app_data_by_name("initproc").unwrap());
 }
 
+pub struct TaskInner {
+    pub memory_set: MemorySet,
+    pub task_status: TaskStatus,
+    /// 使用Weak指针, 防止循环引用, 不影响父进程的引用计数
+    /// initproc的parent为None
+    // pub parent: Option<Weak<Task>>,
+    // 使用usize记录父进程的Task指针
+    // initproc的parent为0
+    pub parent: Option<Weak<Task>>,
+    pub children: Vec<Arc<Task>>,
+    pub exit_code: i32,
+    pub fd_table: Vec<Option<Arc<dyn File + Send + Sync>>>,
+    pub cwd: Path,
+}
+
+impl TaskInner {
+    pub fn alloc_fd(&mut self) -> usize {
+        if let Some(fd) = (0..self.fd_table.len()).find(|fd| self.fd_table[*fd].is_none()) {
+            fd
+        } else {
+            self.fd_table.push(None);
+            self.fd_table.len() - 1
+        }
+    }
+    pub fn reserve_fd(&mut self, fd: usize) {
+        if fd >= self.fd_table.len() {
+            self.fd_table.resize(fd + 1, None);
+        }
+    }
+}
+
 pub fn add_initproc() {
     add_task(INITPROC.clone());
     // 设置tp寄存器指向INITPROC
@@ -520,6 +536,20 @@ pub fn sys_getpid() -> isize {
     current_task().tid as isize
 }
 
+// 获取父进程的pid
+pub fn sys_getppid() -> isize {
+    let task = current_task();
+    let parent = task
+        .inner
+        .lock()
+        .parent
+        .as_ref()
+        .unwrap()
+        .upgrade()
+        .unwrap();
+    parent.tid as isize
+}
+
 // 不能从自己切换到自己
 // 注意调用者要释放原任务的锁, 否则会死锁
 #[no_mangle]
@@ -712,8 +742,10 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
         let found_tid = child.tid as i32;
         // 写入exit_code
         // Todo: 需要对地址检查
-        unsafe {
-            *exit_code_ptr = child.inner.lock().exit_code;
+        if exit_code_ptr != core::ptr::null_mut() {
+            unsafe {
+                *exit_code_ptr = child.inner.lock().exit_code;
+            }
         }
         return found_tid as isize;
     } else {

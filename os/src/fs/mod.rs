@@ -31,6 +31,7 @@ pub trait File: Send + Sync {
     fn seek(&self, offset: usize);
 }
 
+// 指示在当前工作目录下打开文件
 pub const AT_FDCWD: isize = -100;
 pub const AT_REMOVEDIR: u32 = 0x200;
 

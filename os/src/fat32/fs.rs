@@ -30,7 +30,7 @@ impl FAT32FileSystem {
                     boot_sector.is_valid(),
                     "FAT32FileSystem::open(): Error loading boot_sector!"
                 );
-                log::info!("{:?}", boot_sector);
+                // log::info!("{:?}", boot_sector);
                 Arc::new(FAT32Meta::new(boot_sector))
             },
         );

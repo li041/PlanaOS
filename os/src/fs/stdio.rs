@@ -3,7 +3,7 @@ use alloc::boxed::Box;
 
 use super::{File, FileMeta};
 // use crate::mm::UserBuffer;
-use crate::{sbi::console_getchar, task::suspend_current_and_run_next};
+use crate::{sbi::console_getchar, task::yield_current_task};
 // use crate::task::yield_task;
 ///Standard input
 pub struct Stdin;
@@ -25,7 +25,7 @@ impl File for Stdin {
             c = console_getchar();
             // opensbi returns usize::MAX if no char available
             if c == usize::MAX {
-                suspend_current_and_run_next();
+                yield_current_task();
                 continue;
             } else {
                 break;

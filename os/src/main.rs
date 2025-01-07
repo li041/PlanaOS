@@ -106,7 +106,7 @@ pub fn rust_main(_hart_id: usize) -> ! {
     trap::enable_timer_interrupt();
     timer::set_next_trigger();
     fs::list_apps();
-    // loader::list_apps();
+    loader::list_apps();
     // pass block_device_test, 注意实际运行时别调用这个函数, 会覆盖Block内容
     // block_device_test();
     DEBUG_FLAG.store(1, core::sync::atomic::Ordering::SeqCst);
