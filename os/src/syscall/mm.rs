@@ -7,6 +7,7 @@ use crate::{
     utils::{ceil_to_page_size, floor_to_page_size},
 };
 use bitflags::bitflags;
+use riscv::register::fcsr::read;
 
 pub fn sys_brk(brk: usize) -> isize {
     log::info!("sys_brk: brk: {:#x}", brk);
@@ -161,9 +162,7 @@ pub fn sys_mmap(
         let buf = unsafe { core::slice::from_raw_parts_mut(start as *mut u8, len) };
         let origin_offset = file.get_meta().offset;
         file.seek(offset);
-        // if file.read(buf) != len {
-        //     return -22;
-        // }
+        file.read(buf);
         file.seek(origin_offset);
         log::error!("mmap start: {:#x}", start as isize);
         log::error!("mmap content: {:?}", buf);

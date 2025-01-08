@@ -15,7 +15,7 @@ pub struct Utsname {
 impl Default for Utsname {
     fn default() -> Self {
         Self {
-            sysname: Self::from_str("Aronaos"),
+            sysname: Self::from_str("RROS"),
             nodename: Self::from_str("LAPTOP"),
             release: Self::from_str("5.15.146.1-standard"),
             version: Self::from_str("#1 SMP Thu Jan"),

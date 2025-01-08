@@ -33,7 +33,7 @@ use riscv::asm;
 
 use context::{check_task_context_in_kernel_stack, TaskContext};
 use id::tid_alloc;
-pub use id::KID_ALLOCATOR;
+pub use id::{KIdHandle, TidHandle, KID_ALLOCATOR};
 use kstack::{get_stack_top_by_sp, kstack_alloc, KernelStack, KSTACK_SIZE};
 use scheduler::{
     add_task, block_task, fetch_task, switch_to_next_task, unblock_task_wait_on_tid, CloneFlags,
@@ -50,7 +50,7 @@ pub struct Task {
     /// kstack在Task中要保持在第一个field, 否则在`__switch`中会出错
     /// 只对task_status不为Running的task才有效, 其他的需要读sp寄存器
     pub kstack: KernelStack,
-    pub tid: usize,
+    pub tid: TidHandle,
     pub inner: SpinNoIrqLock<TaskInner>,
 }
 
@@ -75,7 +75,7 @@ impl Task {
     pub fn zero_init() -> Self {
         Task {
             kstack: KernelStack(0),
-            tid: 0,
+            tid: TidHandle(0),
             inner: SpinNoIrqLock::new(TaskInner {
                 memory_set: MemorySet::new_bare(),
                 task_status: TaskStatus::Running,
@@ -131,13 +131,6 @@ impl Task {
             trap_cx_ptr.write(trap_context);
             task_cx_ptr.write(task_context);
         }
-        log::error!(
-            "task {} tp: {:#x}, satp: {:#x}, kernel_stack: {:#x}",
-            tid,
-            task_ptr,
-            satp,
-            task.kstack.0
-        );
         task
     }
     pub fn fork(self: &Arc<Self>, user_stack_top: Option<usize>) -> Arc<Self> {
@@ -178,6 +171,8 @@ impl Task {
         let child_cwd = parent_inner.cwd.clone();
         // 分配新的tid
         let tid = tid_alloc();
+        // Debug:
+        let debug_tid = tid.0;
 
         let task = Arc::new(Task {
             // 对于fork出的子进程, 内核栈是新分配的, 其中只有`TrapContext`是父进程的副本, 然后是初始化的`TaskContext`
@@ -215,13 +210,12 @@ impl Task {
             log::error!("child user_sp: {:#x}", (*dst_trap_cx_ptr).x[2]);
         }
         log::error!(
-            "[Task::fork]task {} tp: {:#x}, satp: {:#x}, kernel_stack: {:#x}",
-            tid,
+            "[Task::fork] task {} tp: {:#x}, satp: {:#x}, kernel_stack: {:#x}",
+            debug_tid,
             child_tp,
             child_satp,
             task.kstack.0
         );
-
         // 将子进程加入父进程的children列表
         parent_inner.children.push(task.clone());
         task
@@ -452,7 +446,7 @@ pub fn sys_fork(user_stack_top: Option<usize>) -> isize {
     current_task.show_info();
     // let child_task = current_task.fork(user_stack_top);
     let child_task = current_task.fork(user_stack_top);
-    let child_tid = child_task.tid as isize;
+    let child_tid = child_task.tid.0 as isize;
     add_task(child_task);
     log::info!("fork child tid: {}", child_tid);
     child_tid
@@ -483,7 +477,10 @@ pub fn sys_clone(
                 Some(stack)
             }
         };
-        sys_fork(stack)
+        let ret = sys_fork(stack);
+        // Here is for testcase
+        yield_current_task();
+        return ret;
     } else if clone_flags.contains(CloneFlags::CLONE_VM) {
         panic!("unimplemented CLONE_VM!")
     } else {
@@ -519,7 +516,7 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> is
         task.exec(all_data.as_slice(), args_vec, envs_vec);
         0
     } else if path.is_relative() && path.len() == 1 {
-        /// 从内核中加载的应用程序
+        // 从内核中加载的应用程序
         if let Some(elf_data) = get_app_data_by_name(&path.get_name()) {
             let task = current_task();
             task.exec(elf_data, args_vec, envs_vec);
@@ -533,7 +530,7 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> is
 }
 
 pub fn sys_getpid() -> isize {
-    current_task().tid as isize
+    current_task().tid.0 as isize
 }
 
 // 获取父进程的pid
@@ -547,7 +544,7 @@ pub fn sys_getppid() -> isize {
         .unwrap()
         .upgrade()
         .unwrap();
-    parent.tid as isize
+    parent.tid.0 as isize
 }
 
 // 不能从自己切换到自己
@@ -622,7 +619,7 @@ pub fn sys_exit(exit_code: i32) -> ! {
 
     let task = current_task();
 
-    let tid = task.tid;
+    let tid = task.tid.0;
     log::warn!(
         "[sys_exit] task {} exit with exit_code {} ...",
         tid,
@@ -669,89 +666,98 @@ pub fn sys_exit(exit_code: i32) -> ! {
 }
 
 // 使用block
-// pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32, option: i32) -> isize {
-//     let option = WaitOption::from_bits(option).unwrap();
-//     log::warn!(
-//         "[sys_waitpid] pid: {}, exit_code_ptr: {:?}, option: {:?}",
-//         pid,
-//         exit_code_ptr,
-//         option
-//     );
-//     {
-//         let task = current_task();
-//         let inner = task.inner.lock();
-//         if !inner
-//             .children
-//             .iter()
-//             .any(|p| pid == -1 || pid as usize == p.tid)
-//         {
-//             // 没有找到子进程
-//             return -1;
-//         }
-//     }
-//     loop {
-//         // 有子进程, 进一步看是否有子进程退出
-//         let task = current_task();
-//         let mut inner = task.inner.lock();
-//         let pair = inner.children.iter().enumerate().find(|(_, p)| {
-//             p.inner.lock().task_status == TaskStatus::Zombie && (pid == -1 || pid as usize == p.tid)
-//         });
-
-//         // 如果pid > 0, 则等待指定的子进程
-//         if let Some((idx, _)) = pair {
-//             let child = inner.children.remove(idx);
-//             assert_eq!(Arc::strong_count(&child), 1);
-//             let found_tid = child.tid as i32;
-//             // 写入exit_code
-//             // Todo: 需要对地址检查
-//             unsafe {
-//                 if exit_code_ptr != core::ptr::null_mut() {
-//                     *exit_code_ptr = child.inner.lock().exit_code;
-//                 }
-//             }
-//             return found_tid as isize;
-//         } else {
-//             if option.contains(WaitOption::WNOHANG) {
-//                 return 0;
-//             } else {
-//                 // 没有子进程退出, 则挂起当前进程
-//                 drop(inner);
-//                 yield_current_task();
-//                 // blocking_current_task_and_run_next();
-//             }
-//         }
-//     }
-// }
-
-pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
-    let task = current_task();
-    let mut inner = task.inner.lock();
-    if !inner
-        .children
-        .iter()
-        .any(|p| pid == -1 || pid as usize == p.tid)
+#[no_mangle]
+pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> isize {
+    let option = WaitOption::from_bits(option).unwrap();
+    log::warn!(
+        "[sys_waitpid] pid: {}, exit_code_ptr: {:x}, option: {:?}",
+        pid,
+        exit_code_ptr,
+        option
+    );
     {
-        return -1;
+        let task = current_task();
+        let inner = task.inner.lock();
+        if !inner
+            .children
+            .iter()
+            .any(|p| pid == -1 || pid as usize == p.tid.0)
+        {
+            // 没有找到子进程
+            return -1;
+        }
     }
-    let pair = inner.children.iter().enumerate().find(|(_, p)| {
-        p.inner.lock().task_status == TaskStatus::Zombie && (pid == -1 || pid as usize == p.tid)
-    });
-    if let Some((idx, _)) = pair {
-        let child = inner.children.remove(idx);
-        assert_eq!(Arc::strong_count(&child), 1);
-        let found_tid = child.tid as i32;
-        // 写入exit_code
-        // Todo: 需要对地址检查
-        if exit_code_ptr != core::ptr::null_mut() {
+    loop {
+        // 有子进程, 进一步看是否有子进程退出
+        let task = current_task();
+        let mut inner = task.inner.lock();
+        let pair = inner.children.iter().enumerate().find(|(_, p)| {
+            p.inner.lock().task_status == TaskStatus::Zombie
+                && (pid == -1 || pid as usize == p.tid.0)
+        });
+
+        // 如果pid > 0, 则等待指定的子进程
+        if let Some((idx, _)) = pair {
+            let child = inner.children.remove(idx);
+            // assert_eq!(Arc::strong_count(&child), 1);
+            let found_tid = child.tid.0 as i32;
+            // 写入exit_code
+            // Todo: 需要对地址检查
             unsafe {
-                *exit_code_ptr = child.inner.lock().exit_code;
+                log::warn!(
+                    "[sys_waitpid] child {} exit with code {}, exit_code_ptr: {:x}",
+                    found_tid,
+                    child.inner.lock().exit_code,
+                    exit_code_ptr
+                );
+                let exit_code_ptr = exit_code_ptr as *mut i32;
+                if exit_code_ptr != core::ptr::null_mut() {
+                    exit_code_ptr.write_volatile((child.inner.lock().exit_code & 0xff) << 8);
+                }
+            }
+            return found_tid as isize;
+        } else {
+            if option.contains(WaitOption::WNOHANG) {
+                return 0;
+            } else {
+                // 没有子进程退出, 则挂起当前进程
+                drop(inner);
+                yield_current_task();
+                // blocking_current_task_and_run_next();
             }
         }
-        return found_tid as isize;
-    } else {
-        -2
     }
 }
+
+// pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
+//     let task = current_task();
+//     let mut inner = task.inner.lock();
+//     if !inner
+//         .children
+//         .iter()
+//         .any(|p| pid == -1 || pid as usize == p.tid.0)
+//     {
+//         return -1;
+//     }
+//     let pair = inner.children.iter().enumerate().find(|(_, p)| {
+//         p.inner.lock().task_status == TaskStatus::Zombie && (pid == -1 || pid as usize == p.tid.0)
+//     });
+//     if let Some((idx, _)) = pair {
+//         let child = inner.children.remove(idx);
+//         assert_eq!(Arc::strong_count(&child), 1);
+//         let found_tid = child.tid.0 as i32;
+//         // 写入exit_code
+//         // Todo: 需要对地址检查
+//         if exit_code_ptr != core::ptr::null_mut() {
+//             unsafe {
+//                 *exit_code_ptr = child.inner.lock().exit_code;
+//             }
+//         }
+//         return found_tid as isize;
+//     } else {
+//         -2
+//     }
+// }
 
 // /// 成功返回退出子进程的pid, 失败返回-1
 // pub fn wait_pid(pid: i32, exit_code_ptr: *mut i32) -> Result<usize, WaitError> {
@@ -821,6 +827,39 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 //     }
 // }
 
-pub fn sys_get_time() -> isize {
-    get_time_ms() as isize
+/// sys_gettimeofday, current time = sec + usec
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct TimeVal {
+    /// seconds
+    pub sec: usize,
+    /// microseconds
+    pub usec: usize,
+}
+
+pub fn sys_get_time(time_val_ptr: usize) -> isize {
+    let time_val_ptr = time_val_ptr as *mut TimeVal;
+    let current_time_ms = get_time_ms();
+    let time_val = TimeVal {
+        sec: current_time_ms / 1000,
+        usec: current_time_ms % 1000 * 1000,
+    };
+    unsafe {
+        time_val_ptr.write_volatile(time_val);
+    }
+    0
+}
+
+pub fn sys_nanosleep(time_val_ptr: usize) -> isize {
+    let time_val_ptr = time_val_ptr as *const TimeVal;
+    let time_val = unsafe { time_val_ptr.read() };
+    let time_ms = time_val.sec * 1000 + time_val.usec / 1000;
+    let start_time = get_time_ms();
+    loop {
+        let current_time = get_time_ms();
+        if current_time - start_time >= time_ms {
+            break;
+        }
+    }
+    0
 }

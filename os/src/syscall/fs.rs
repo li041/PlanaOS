@@ -117,6 +117,12 @@ pub fn sys_close(fd: usize) -> isize {
 }
 
 pub fn sys_openat(dirfd: isize, pathname: *const u8, flags: u32, _mode: usize) -> isize {
+    log::info!(
+        "[sys_openat] pid {} open file: {:?} with flags: {:?}",
+        current_task().tid,
+        c_str_to_string(pathname),
+        flags
+    );
     let task = current_task();
     let path = Path::from(c_str_to_string(pathname));
     if let Ok(inode) = open_file(dirfd, &path, OpenFlags::from_bits(flags).unwrap()) {

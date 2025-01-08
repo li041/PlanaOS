@@ -18,8 +18,8 @@ use mm::{sys_brk, sys_mmap, sys_munmap};
 use util::{sys_times, sys_uname};
 
 use crate::task::{
-    sys_clone, sys_exec, sys_execve, sys_exit, sys_fork, sys_get_time, sys_getpid, sys_waitpid,
-    sys_yield,
+    sys_clone, sys_exec, sys_execve, sys_exit, sys_fork, sys_get_time, sys_getpid, sys_getppid,
+    sys_nanosleep, sys_waitpid, sys_yield,
 };
 
 mod fs;
@@ -42,6 +42,7 @@ const SYSCALL_READ: usize = 63;
 const SYSCALL_WRITE: usize = 64;
 const SYS_FSTAT: usize = 80;
 const SYSCALL_EXIT: usize = 93;
+const SYSCALL_NANOSLEEP: usize = 101;
 const SYSCALL_YIELD: usize = 124;
 const SYSCALL_TIMES: usize = 153;
 const SYSCALL_UNAME: usize = 160;
@@ -98,19 +99,20 @@ pub fn syscall(
         SYSCALL_WRITE => sys_write(a0, a1 as *const u8, a2),
         SYS_FSTAT => sys_fstat(a0, a1 as *mut u8),
         SYSCALL_EXIT => sys_exit(a0 as i32),
+        SYSCALL_NANOSLEEP => sys_nanosleep(a0),
         SYSCALL_YIELD => sys_yield(),
         SYSCALL_TIMES => sys_times(a0),
         SYSCALL_UNAME => sys_uname(a0),
-        SYSCALL_GET_TIME => sys_get_time(),
+        SYSCALL_GET_TIME => sys_get_time(a0),
         SYSCALL_GITPID => sys_getpid(),
-        SYSCALL_GETPPID => sys_getpid(),
+        SYSCALL_GETPPID => sys_getppid(),
         SYSCALL_BRK => sys_brk(a0),
         SYSCALL_MUNMAP => sys_munmap(a0, a1),
         SYSCALL_FORK => sys_clone(a0 as u32, a1, a2, a3, a4),
         SYSCALL_EXEC => sys_execve(a0 as *mut u8, a1 as *const usize, a2 as *const usize),
         SYSCALL_MMAP => sys_mmap(a0, a1, a2, a3, a4 as i32, a5),
-        SYSCALL_WAIT4 => sys_waitpid(a0 as isize, a1 as *mut i32),
-        // SYSCALL_WAIT4 => sys_waitpid(a0 as isize, a1 as *mut i32, a2 as i32),
+        // SYSCALL_WAIT4 => sys_waitpid(a0 as isize, a1 as *mut i32),
+        SYSCALL_WAIT4 => sys_waitpid(a0 as isize, a1, a2 as i32),
         _ => panic!("Unsupported syscall_id: {}", syscall_id),
     }
 }

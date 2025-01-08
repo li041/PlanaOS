@@ -102,8 +102,7 @@ pub fn rust_main(_hart_id: usize) -> ! {
     // let init_proc = Arc::new(Task::new(elf_data));
     show_context_size();
     add_initproc();
-
-    trap::enable_timer_interrupt();
+    // trap::enable_timer_interrupt();
     timer::set_next_trigger();
     fs::list_apps();
     loader::list_apps();
