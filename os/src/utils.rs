@@ -1,8 +1,6 @@
-use alloc::vec;
 use alloc::{string::String, vec::Vec};
 
 use crate::config::PAGE_SIZE;
-use crate::task::aux::AuxHeader;
 
 /// 由caller保证ptr的合法性
 /// Convert C-style string(end with '\0') to rust string

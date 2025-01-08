@@ -2,24 +2,18 @@
 //! MapArea
 //! MapType
 //! MapPermision
-use core::{arch::asm, sync::atomic::AtomicU64};
+use core::arch::asm;
 
-use super::{page_table, VirtAddr};
+use super::VirtAddr;
 use crate::{
     config::{MMAP_MIN_ADDR, PAGE_SIZE_BITS, USER_STACK_SIZE},
-    mm::check_va_mapping,
     task::aux::*,
     utils::ceil_to_page_size,
-    DEBUG_FLAG,
 };
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 use bitflags::bitflags;
 use log::info;
-use riscv::{
-    addr::Page,
-    paging::Mapper,
-    register::{mstatus::set_fs, satp},
-};
+use riscv::register::satp;
 use xmas_elf::program::Type;
 
 use super::{
@@ -176,7 +170,7 @@ impl MemorySet {
         /* 映射程序头 */
         // 程序头表在内存中的起始虚拟地址
         // 程序头表一般是从LOAD段(且是代码段)开始
-        let mut header_va: Option<usize> = None; // used to build auxv
+        // let header_va: Option<usize> = None; // used to build auxv
         let mut max_end_vpn = VirtPageNum(0);
 
         for i in 0..ph_count {

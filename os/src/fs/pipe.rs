@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, sync::Arc};
+use alloc::sync::Arc;
 use log::debug;
 
 use crate::{mutex::SpinNoIrqLock, task::yield_current_task};

@@ -1,6 +1,4 @@
 //!Stdin & Stdout
-use alloc::boxed::Box;
-
 use super::{File, FileMeta};
 // use crate::mm::UserBuffer;
 use crate::{sbi::console_getchar, task::yield_current_task};

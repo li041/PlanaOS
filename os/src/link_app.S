@@ -3,14 +3,13 @@
     .section .data
     .global _num_app
 _num_app:
-    .quad 6
+    .quad 5
     .quad app_0_start
     .quad app_1_start
     .quad app_2_start
     .quad app_3_start
     .quad app_4_start
-    .quad app_5_start
-    .quad app_5_end
+    .quad app_4_end
 
     .global _app_names
 _app_names:
@@ -19,7 +18,6 @@ _app_names:
     .string "testsuits"
     .string "user_shell"
     .string "busybox"
-    .string "errno_test"
 
     .section .data
     .global app_0_start
@@ -60,11 +58,3 @@ app_3_end:
 app_4_start:
     .incbin "../busybox"
 app_4_end:
-
-    .section .data
-    .global app_5_start
-    .global app_5_end
-    .align 3
-app_5_start:
-    .incbin "../errno_test"
-app_5_end:

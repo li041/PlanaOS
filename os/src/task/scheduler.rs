@@ -1,11 +1,8 @@
-use core::{arch::asm, cell::RefCell, fmt::Debug};
+use core::fmt::Debug;
 
-use alloc::{collections::vec_deque::VecDeque, sync::Arc, task};
+use alloc::{collections::vec_deque::VecDeque, sync::Arc};
 
-use crate::{
-    mutex::{SpinNoIrq, SpinNoIrqLock},
-    task::{context::check_task_context_in_kernel_stack, switch},
-};
+use crate::{mutex::SpinNoIrqLock, task::switch};
 
 use super::{Task, TaskStatus};
 use bitflags::bitflags;

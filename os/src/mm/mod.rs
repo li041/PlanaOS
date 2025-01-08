@@ -28,6 +28,7 @@ pub fn init() {
     KERNEL_SPACE.lock().activate();
 }
 
+#[allow(unused)]
 pub fn check_va_mapping(va: usize) {
     let satp: usize;
     unsafe {

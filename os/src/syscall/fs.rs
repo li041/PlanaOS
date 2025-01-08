@@ -1,25 +1,15 @@
-use core::{arch::asm, ptr::addr_eq};
-
 use alloc::string::ToString;
 
 use crate::{
     fs::{
-        create_dir,
-        inode::InodeMode,
-        open_file, open_inode,
-        path::Path,
-        pipe::{self, Pipe},
-        OpenFlags, AT_FDCWD, AT_REMOVEDIR,
+        create_dir, inode::InodeMode, open_file, open_inode, path::Path, pipe::Pipe, OpenFlags,
+        AT_FDCWD, AT_REMOVEDIR,
     },
     mm::copy_to_user,
-    sbi::console_getchar,
-    task::{current_task, sys_yield, yield_current_task},
+    task::current_task,
     timer::TimeSpec,
     utils::c_str_to_string,
 };
-
-const FD_STDOUT: usize = 1;
-const FD_STDIN: usize = 0;
 
 pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
     let task = current_task();

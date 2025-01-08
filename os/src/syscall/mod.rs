@@ -18,8 +18,8 @@ use mm::{sys_brk, sys_mmap, sys_munmap};
 use util::{sys_times, sys_uname};
 
 use crate::task::{
-    sys_clone, sys_exec, sys_execve, sys_exit, sys_fork, sys_get_time, sys_getpid, sys_getppid,
-    sys_nanosleep, sys_waitpid, sys_yield,
+    sys_clone, sys_execve, sys_exit, sys_get_time, sys_getpid, sys_getppid, sys_nanosleep,
+    sys_waitpid, sys_yield,
 };
 
 mod fs;
@@ -56,13 +56,6 @@ const SYSCALL_EXEC: usize = 221;
 const SYSCALL_MMAP: usize = 222;
 const SYSCALL_WAIT4: usize = 260;
 
-/// handle syscall exception with `syscall_id` and other arguments
-pub fn syscall_perv(syscall_id: usize, args: [usize; 6]) -> isize {
-    match syscall_id {
-        _ => panic!("Unsupported syscall_id: {}", syscall_id),
-    }
-}
-
 const CARELESS_SYSCALLS: [usize; 4] = [63, 64, 124, 260];
 
 #[no_mangle]
@@ -73,7 +66,7 @@ pub fn syscall(
     a3: usize,
     a4: usize,
     a5: usize,
-    a6: usize,
+    _a6: usize,
     syscall_id: usize,
 ) -> isize {
     if !CARELESS_SYSCALLS.contains(&syscall_id) {

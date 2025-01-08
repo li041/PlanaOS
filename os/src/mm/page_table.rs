@@ -7,10 +7,7 @@ use core::{
 };
 
 use super::address::{PhysAddr, PhysPageNum, VirtPageNum};
-use crate::{
-    config::{KERNEL_DIRECT_OFFSET, PAGE_SIZE_BITS},
-    DEBUG_FLAG,
-};
+use crate::config::{KERNEL_DIRECT_OFFSET, PAGE_SIZE_BITS};
 use bitflags::bitflags;
 
 use super::{

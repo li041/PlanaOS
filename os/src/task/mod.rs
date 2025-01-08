@@ -7,15 +7,12 @@ pub mod scheduler;
 pub mod switch;
 
 use crate::{
-    boards::qemu::CLOCK_FREQ,
-    config::PAGE_SIZE,
     fs::{open_file, path::Path, File, OpenFlags, Stdin, Stdout, AT_FDCWD},
     loader::get_app_data_by_name,
-    mm::{copy_to_user, KERNEL_SPACE},
     mutex::SpinNoIrqLock,
     sbi::shutdown,
-    timer::{get_time, get_time_ms},
-    trap::{trap_handler, TrapContext},
+    timer::get_time_ms,
+    trap::TrapContext,
     utils::{c_str_to_string, extract_cstrings},
 };
 use alloc::{string::String, vec};
@@ -24,17 +21,13 @@ use alloc::{
     vec::Vec,
 };
 use aux::{AuxHeader, AT_EXECFN, AT_NULL, AT_RANDOM};
-use core::{
-    arch::asm,
-    sync::atomic::{AtomicU64, AtomicUsize},
-};
+use core::arch::asm;
 use lazy_static::lazy_static;
-use riscv::asm;
 
-use context::{check_task_context_in_kernel_stack, TaskContext};
+use context::TaskContext;
 use id::tid_alloc;
-pub use id::{KIdHandle, TidHandle, KID_ALLOCATOR};
-use kstack::{get_stack_top_by_sp, kstack_alloc, KernelStack, KSTACK_SIZE};
+pub use id::TidHandle;
+use kstack::{get_stack_top_by_sp, kstack_alloc, KernelStack};
 use scheduler::{
     add_task, block_task, fetch_task, switch_to_next_task, unblock_task_wait_on_tid, CloneFlags,
     WaitOption,
@@ -52,16 +45,6 @@ pub struct Task {
     pub kstack: KernelStack,
     pub tid: TidHandle,
     pub inner: SpinNoIrqLock<TaskInner>,
-}
-
-// 通过tp寄存器使用裸指针获取当前Task
-pub fn current_task_violate() -> Task {
-    let tp: usize;
-    unsafe {
-        asm!("mv {}, tp", out(reg) tp);
-    }
-    let task_ptr = tp as *const Task;
-    unsafe { task_ptr.read() }
 }
 
 pub fn current_task() -> Arc<Task> {
@@ -89,7 +72,7 @@ impl Task {
     }
     /// init task memory space, push `TrapContext` and `TaskContext` to kernel stack
     pub fn new_initproc(elf_data: &[u8]) -> Arc<Self> {
-        let (memory_set, satp, user_sp, entry_point, aux_vec) = MemorySet::from_elf(elf_data);
+        let (memory_set, satp, user_sp, entry_point, _aux_vec) = MemorySet::from_elf(elf_data);
         log::info!("Task satp: {:#x}", satp);
         let tid = tid_alloc();
         // alloc kernel stack and map kstack
@@ -228,7 +211,7 @@ impl Task {
         // 1. 修改memory set
         // 2. 初始化用户栈, 压入args和envs
         // 3. 修改内核栈中的`TrapContext`
-        let (memory_set, satp, ustack_top, entry_point, aux_vec) = MemorySet::from_elf(elf_data);
+        let (memory_set, _satp, ustack_top, entry_point, aux_vec) = MemorySet::from_elf(elf_data);
         //修改memory set
         memory_set.activate();
         log::error!(
@@ -488,19 +471,6 @@ pub fn sys_clone(
     }
 }
 
-// 用来执行内嵌的应用程序
-pub fn sys_exec(path: *const u8) -> isize {
-    let path = c_str_to_string(path);
-    if let Some(elf_data) = get_app_data_by_name(&path) {
-        let task = current_task();
-        task.exec(elf_data, Vec::new(), Vec::new());
-        log::info!("current_task_id: {} , exec path: {}", task.tid, path);
-        0
-    } else {
-        -1
-    }
-}
-
 pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> isize {
     // 目前支持在根目录下执行应用程序
     let path = Path::from(c_str_to_string(path));
@@ -608,7 +578,7 @@ pub fn sys_yield() -> isize {
     0
 }
 
-pub const INITPROC_TID: usize = 0;
+pub const INITPROC_TID: usize = 1;
 
 pub fn sys_exit(exit_code: i32) -> ! {
     // 退出当前进程, 清理资源
@@ -627,7 +597,7 @@ pub fn sys_exit(exit_code: i32) -> ! {
     );
     // 如果是initproc, 则关机
     if tid == INITPROC_TID {
-        println!(
+        log::info!(
             "[kernel] Initproc process exit with exit_code {} ...",
             exit_code
         );

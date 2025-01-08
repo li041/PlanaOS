@@ -1,12 +1,9 @@
 use core::arch::asm;
 
 use alloc::vec::Vec;
-use riscv::{
-    asm,
-    register::sstatus::{self, Sstatus, SPP},
-};
+use riscv::register::sstatus::{self, Sstatus, SPP};
 
-use crate::{config::PAGE_SIZE_BITS, console::print, mm::frame_allocator::frame_alloc};
+use crate::{config::PAGE_SIZE_BITS, mm::frame_allocator::frame_alloc};
 
 use crate::mm::page_table::map_temp;
 /// Trap Context

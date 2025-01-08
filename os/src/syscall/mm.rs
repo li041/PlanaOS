@@ -1,5 +1,3 @@
-use core::error;
-
 use crate::{
     config::{MMAP_MIN_ADDR, PAGE_SIZE, PAGE_SIZE_BITS},
     mm::{MapPermission, VPNRange, VirtAddr, VirtPageNum},
@@ -7,7 +5,6 @@ use crate::{
     utils::{ceil_to_page_size, floor_to_page_size},
 };
 use bitflags::bitflags;
-use riscv::register::fcsr::read;
 
 pub fn sys_brk(brk: usize) -> isize {
     log::info!("sys_brk: brk: {:#x}", brk);
